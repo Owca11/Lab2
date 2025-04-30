@@ -1,0 +1,25 @@
+=== Needleman-Wunsch Alignment Results ===
+
+=== Parameters ===
+Match score: 1
+Mismatch penalty: -1
+Gap penalty: -2
+
+=== Optimal Alignment ===
+Seq1: CATWALK
+Seq2: C-QWARD
+
+
+=== Alignment Statistics ===
+Alignment length: 7
+Matches: 3
+Mismatches: 3
+Gaps: 1
+Identity: 42.86%
+Gap percentage: 14.29%
+Alignment score: -2.0
+
+=== Notes ===
+- The alignment shows one optimal pathway
+- Gaps are represented by '-' characters
+- Match/mismatch counts exclude positions with gaps
