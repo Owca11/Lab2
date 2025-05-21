@@ -1,365 +1,536 @@
-import numpy as np
+import tkinter as tk
+from tkinter import filedialog, scrolledtext, messagebox
+import os
 import matplotlib.pyplot as plt
-from Bio import SeqIO
-from typing import Tuple, List, Optional, Dict
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
 
-def read_fasta(file_path: str) -> Tuple[str, str]:
+class MSAGUI:
     """
-    Read sequences from a FASTA file.
+    A graphical user interface for performing Multiple Sequence Alignment using the Star Method.
 
-    Args:
-        file_path: Path to the FASTA file.
+    This application allows users to:
+    - Input sequences manually or via FASTA files
+    - Configure alignment scoring parameters
+    - Visualize aligned sequences with color coding
+    - View alignment statistics
+    - Save results to file
 
-    Returns:
-        Tuple of two sequences (seq1, seq2).
-
-    Raises:
-        ValueError: If the file does not contain exactly two sequences.
-        FileNotFoundError: If the specified file cannot be found.
+    The alignment is performed using a modified Needleman-Wunsch algorithm with
+    a star-based approach that selects a center sequence and aligns all other
+    sequences to it.
     """
-    try:
-        with open(file_path, "r") as file:
-            records = list(SeqIO.parse(file, "fasta"))
-            if len(records) != 2:
-                raise ValueError("FASTA file must contain exactly two sequences.")
-            return str(records[0].seq), str(records[1].seq)
-    except FileNotFoundError:
-        raise FileNotFoundError(f"File not found: {file_path}")
 
+    def __init__(self, master):
+        """Initialize the MSA GUI application.
 
-def initialize_matrix(seq1: str, seq2: str, gap_penalty: int) -> np.ndarray:
-    """
-    Initialize the scoring matrix with gap penalties.
+        Args:
+            master: The root Tkinter window
+        """
+        self.master = master
+        master.title("Multiple Sequence Alignment (Star Method)")
+        master.geometry("1200x800")
 
-    The matrix is initialized with increasing gap penalties in the first row and column,
-    representing the cost of introducing gaps at the beginning of the alignment.
+        # Initialize variables
+        self.input_method = tk.StringVar(value="manual")
+        self.sequences = []
+        self.match_score = tk.IntVar(value=2)
+        self.mismatch_score = tk.IntVar(value=-1)
+        self.gap_penalty = tk.IntVar(value=-2)
 
-    Args:
-        seq1: First sequence.
-        seq2: Second sequence.
-        gap_penalty: Penalty for introducing a gap (should be negative for most cases).
+        # Set up matplotlib figure
+        self.fig, self.ax = plt.subplots(figsize=(5, 4), dpi=100)
+        self.ax.set_xticks([])
+        self.ax.set_yticks([])
+        self.ax.set_title("Alignment Conservation")
+        plt.tight_layout()
 
-    Returns:
-        Initialized matrix with gap penalties in the first row and column.
-    """
-    rows, cols = len(seq1) + 1, len(seq2) + 1
-    matrix = np.zeros((rows, cols))
-    for i in range(rows):
-        matrix[i, 0] = i * gap_penalty
-    for j in range(cols):
-        matrix[0, j] = j * gap_penalty
-    return matrix
+        # Build the GUI
+        self.create_widgets()
 
+    def create_widgets(self):
+        """Create and arrange all GUI components."""
+        # Input Frame
+        input_frame = tk.LabelFrame(self.master, text="Input Sequences", padx=10, pady=10)
+        input_frame.pack(pady=10, padx=10, fill="x")
 
-def fill_matrix(
-        seq1: str,
-        seq2: str,
-        matrix: np.ndarray,
-        match_score: int,
-        mismatch_penalty: int,
-        gap_penalty: int,
-) -> np.ndarray:
-    """
-    Fill the scoring matrix using the Needleman-Wunsch algorithm.
+        tk.Radiobutton(input_frame, text="Manual Input", variable=self.input_method, value="manual",
+                       command=self.toggle_input_fields).pack(anchor="w")
+        self.manual_input_label = tk.Label(input_frame, text="Enter sequences (one per line):")
+        self.manual_input_label.pack(anchor="w")
+        self.sequence_text = scrolledtext.ScrolledText(input_frame, width=80, height=8)
+        self.sequence_text.pack(pady=5)
 
-    The matrix is filled by considering three possible moves for each cell:
-    diagonal (match/mismatch), vertical (gap in seq2), or horizontal (gap in seq1).
+        tk.Radiobutton(input_frame, text="From FASTA File", variable=self.input_method, value="fasta",
+                       command=self.toggle_input_fields).pack(anchor="w")
+        self.fasta_frame = tk.Frame(input_frame)
+        self.fasta_frame.pack(anchor="w", fill="x")
+        self.fasta_label = tk.Label(self.fasta_frame, text="FASTA File:")
+        self.fasta_label.pack(side="left", padx=5)
+        self.fasta_path_entry = tk.Entry(self.fasta_frame, width=50)
+        self.fasta_path_entry.pack(side="left", expand=True, fill="x")
+        self.browse_button = tk.Button(self.fasta_frame, text="Browse", command=self.browse_fasta_file)
+        self.browse_button.pack(side="left", padx=5)
 
-    Args:
-        seq1: First sequence.
-        seq2: Second sequence.
-        matrix: Initialized scoring matrix.
-        match_score: Score for matching characters (typically positive).
-        mismatch_penalty: Penalty for mismatches (typically negative).
-        gap_penalty: Penalty for gaps (typically negative).
+        self.toggle_input_fields()
 
-    Returns:
-        Filled scoring matrix with optimal scores for all possible alignments.
-    """
-    for i in range(1, len(seq1) + 1):
-        for j in range(1, len(seq2) + 1):
-            match = matrix[i - 1, j - 1] + (match_score if seq1[i - 1] == seq2[j - 1] else mismatch_penalty)
-            delete = matrix[i - 1, j] + gap_penalty
-            insert = matrix[i, j - 1] + gap_penalty
-            matrix[i, j] = max(match, delete, insert)
-    return matrix
+        # Scoring Scheme Frame
+        scoring_frame = tk.LabelFrame(self.master, text="Scoring Scheme", padx=10, pady=10)
+        scoring_frame.pack(pady=10, padx=10, fill="x")
 
+        tk.Label(scoring_frame, text="Match Score:").grid(row=0, column=0, padx=5, pady=2, sticky="w")
+        tk.Entry(scoring_frame, textvariable=self.match_score, width=10).grid(row=0, column=1, padx=5, pady=2,
+                                                                              sticky="w")
 
-def traceback(
-        seq1: str,
-        seq2: str,
-        matrix: np.ndarray,
-        match_score: int,
-        mismatch_penalty: int,
-        gap_penalty: int,
-) -> Tuple[str, str, List[Tuple[int, int]]]:
-    """
-    Perform traceback to find the optimal alignment path.
+        tk.Label(scoring_frame, text="Mismatch Score:").grid(row=1, column=0, padx=5, pady=2, sticky="w")
+        tk.Entry(scoring_frame, textvariable=self.mismatch_score, width=10).grid(row=1, column=1, padx=5, pady=2,
+                                                                                 sticky="w")
 
-    Starting from the bottom-right corner of the matrix, the algorithm traces back
-    to the top-left corner, choosing at each step the move that led to the current score.
+        tk.Label(scoring_frame, text="Gap Penalty:").grid(row=2, column=0, padx=5, pady=2, sticky="w")
+        tk.Entry(scoring_frame, textvariable=self.gap_penalty, width=10).grid(row=2, column=1, padx=5, pady=2,
+                                                                              sticky="w")
 
-    Args:
-        seq1: First sequence.
-        seq2: Second sequence.
-        matrix: Filled scoring matrix.
-        match_score: Score for matching characters.
-        mismatch_penalty: Penalty for mismatches.
-        gap_penalty: Penalty for gaps.
+        # Control Buttons
+        button_frame = tk.Frame(self.master, padx=10, pady=5)
+        button_frame.pack(pady=5, padx=10, fill="x")
 
-    Returns:
-        Tuple containing:
-        - aligned_seq1: First sequence with gaps inserted
-        - aligned_seq2: Second sequence with gaps inserted
-        - path: List of (i,j) coordinates representing the optimal path through the matrix
-    """
-    aligned_seq1, aligned_seq2 = [], []
-    i, j = len(seq1), len(seq2)
-    path = [(i, j)]
+        tk.Button(button_frame, text="Perform Alignment", command=self.perform_alignment).pack(side="left", padx=5)
+        tk.Button(button_frame, text="Save Output", command=self.save_output).pack(side="right", padx=5)
 
-    while i > 0 or j > 0:
-        if i > 0 and j > 0 and matrix[i, j] == matrix[i - 1, j - 1] + (
-                match_score if seq1[i - 1] == seq2[j - 1] else mismatch_penalty
-        ):
-            aligned_seq1.append(seq1[i - 1])
-            aligned_seq2.append(seq2[j - 1])
-            i -= 1
-            j -= 1
-        elif i > 0 and matrix[i, j] == matrix[i - 1, j] + gap_penalty:
-            aligned_seq1.append(seq1[i - 1])
-            aligned_seq2.append("-")
-            i -= 1
+        # Output Frame
+        output_frame = tk.LabelFrame(self.master, text="Alignment Results", padx=10, pady=10)
+        output_frame.pack(pady=10, padx=10, fill="both", expand=True)
+
+        output_frame.grid_columnconfigure(0, weight=1)
+        output_frame.grid_columnconfigure(1, weight=1)
+        output_frame.grid_rowconfigure(0, weight=0)
+        output_frame.grid_rowconfigure(1, weight=3)
+        output_frame.grid_rowconfigure(2, weight=0)
+        output_frame.grid_rowconfigure(3, weight=1)
+
+        # Left Column Widgets
+        self.alignment_label = tk.Label(output_frame, text="Aligned Sequences:")
+        self.alignment_label.grid(row=0, column=0, sticky="w", padx=5, pady=2)
+        self.alignment_text = scrolledtext.ScrolledText(output_frame, wrap="none", width=90, height=10)
+        self.alignment_text.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+
+        self.statistics_label = tk.Label(output_frame, text="Statistics:")
+        self.statistics_label.grid(row=2, column=0, sticky="w", padx=5, pady=2)
+        self.statistics_text = scrolledtext.ScrolledText(output_frame, width=90, height=5)
+        self.statistics_text.grid(row=3, column=0, sticky="nsew", padx=5, pady=5)
+
+        # Configure text tags for colored output
+        self.alignment_text.tag_configure("match", foreground="green")
+        self.alignment_text.tag_configure("mismatch", foreground="red")
+        self.alignment_text.tag_configure("gap", foreground="blue")
+
+        # Right Column Widget (Matplotlib Plot)
+        self.plot_frame = tk.Frame(output_frame, bd=2, relief="groove")
+        self.plot_frame.grid(row=0, column=1, rowspan=4, sticky="nsew", padx=5, pady=5)
+        self.plot_frame.grid_rowconfigure(0, weight=1)
+        self.plot_frame.grid_columnconfigure(0, weight=1)
+
+        self.canvas_plot = FigureCanvasTkAgg(self.fig, master=self.plot_frame)
+        self.canvas_plot_widget = self.canvas_plot.get_tk_widget()
+        self.canvas_plot_widget.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self.toolbar = NavigationToolbar2Tk(self.canvas_plot, self.plot_frame)
+        self.toolbar.update()
+        self.canvas_plot_widget.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+    def toggle_input_fields(self):
+        """Toggle between manual input and FASTA file input fields."""
+        if self.input_method.get() == "manual":
+            self.manual_input_label.pack(anchor="w")
+            self.sequence_text.pack(pady=5)
+            self.fasta_frame.pack_forget()
         else:
-            aligned_seq1.append("-")
-            aligned_seq2.append(seq2[j - 1])
-            j -= 1
-        path.append((i, j))
+            self.manual_input_label.pack_forget()
+            self.sequence_text.pack_forget()
+            self.fasta_frame.pack(anchor="w", fill="x")
 
-    aligned_seq1 = "".join(reversed(aligned_seq1))
-    aligned_seq2 = "".join(reversed(aligned_seq2))
-    path = list(reversed(path))
+    def browse_fasta_file(self):
+        """Open file dialog to select FASTA file and update path entry."""
+        filepath = filedialog.askopenfilename(filetypes=[("FASTA files", "*.fasta *.fa"), ("All files", "*.*")])
+        if filepath:
+            self.fasta_path_entry.delete(0, tk.END)
+            self.fasta_path_entry.insert(0, filepath)
 
-    return aligned_seq1, aligned_seq2, path
+    def read_fasta_file(self, filepath):
+        """Read sequences from a FASTA file.
 
+        Args:
+            filepath: Path to the FASTA file
 
-def calculate_statistics(
-        aligned_seq1: str,
-        aligned_seq2: str,
-        matrix: np.ndarray,
-        match_score: int,
-        mismatch_penalty: int,
-        gap_penalty: int,
-) -> Dict[str, float]:
-    """
-    Calculate alignment statistics including matches, mismatches, gaps, and percentages.
-
-    Args:
-        aligned_seq1: First aligned sequence with gaps.
-        aligned_seq2: Second aligned sequence with gaps.
-        matrix: Filled scoring matrix (used to get the final alignment score).
-        match_score: Score for matches (used for verification).
-        mismatch_penalty: Penalty for mismatches (used for verification).
-        gap_penalty: Penalty for gaps (used for verification).
-
-    Returns:
-        Dictionary containing alignment statistics:
-        - matches: Number of matching positions
-        - mismatches: Number of mismatching positions
-        - gaps: Number of gaps in alignment
-        - alignment_length: Total length of alignment
-        - identity: Percentage of identical positions
-        - gap_percentage: Percentage of gaps in alignment
-        - score: Final alignment score from the matrix
-    """
-    matches = sum(1 for a, b in zip(aligned_seq1, aligned_seq2) if a == b and a != "-")
-    mismatches = sum(1 for a, b in zip(aligned_seq1, aligned_seq2) if a != b and a != "-" and b != "-")
-    gaps = sum(1 for a, b in zip(aligned_seq1, aligned_seq2) if a == "-" or b == "-")
-    alignment_length = len(aligned_seq1)
-    identity = (matches / alignment_length) * 100 if alignment_length > 0 else 0
-    gap_percentage = (gaps / alignment_length) * 100 if alignment_length > 0 else 0
-
-    return {
-        "matches": matches,
-        "mismatches": mismatches,
-        "gaps": gaps,
-        "alignment_length": alignment_length,
-        "identity": identity,
-        "gap_percentage": gap_percentage,
-        "score": matrix[-1, -1],
-    }
-
-
-def plot_matrix(
-        matrix: np.ndarray,
-        seq1: str,
-        seq2: str,
-        path: List[Tuple[int, int]],
-        output_file: Optional[str] = None,
-) -> None:
-    """
-    Plot the scoring matrix with the optimal path.
-
-    Creates a heatmap of the scoring matrix with the optimal path highlighted.
-    The plot includes sequence labels and a colorbar indicating score values.
-
-    Args:
-        matrix: Filled scoring matrix.
-        seq1: First sequence (for labeling).
-        seq2: Second sequence (for labeling).
-        path: Optimal path through the matrix.
-        output_file: Optional path to save the plot. If None, displays the plot.
-
-    Returns:
-        None
-    """
-    plt.figure(figsize=(10, 8))
-    cax = plt.imshow(matrix, cmap='inferno')
-    plt.colorbar(cax)
-
-    # Annotate matrix values
-    for i in range(matrix.shape[0]):
-        for j in range(matrix.shape[1]):
-            plt.text(j, i, int(matrix[i, j]), va='center', ha='center', color='black')
-
-    # Plot the optimal path
-    path_x, path_y = zip(*path)
-    plt.plot(path_y, path_x, marker='', color='black', linestyle='-', linewidth=1)
-
-    # X-axis (seq2) on top
-    ax = plt.gca()
-    ax.xaxis.tick_top()  # Move x-axis to top
-    ax.xaxis.set_label_position('top')  # Move x-axis label to top
-
-    # Set ticks and labels
-    ax.set_xticks(np.arange(1, len(seq2) + 1))
-    ax.set_yticks(np.arange(1, len(seq1) + 1))
-    ax.set_xticklabels(seq2)
-    ax.set_yticklabels(seq1)
-
-    ax.set_xlabel("Sequence 2", position=(0.5, 1.08))  # Adjust label position
-    ax.set_ylabel("Sequence 1")
-    ax.set_title("Needleman-Wunsch Alignment Matrix", y=1.12)  # Adjust title position
-
-    if output_file:
-        plt.savefig(output_file, bbox_inches='tight')
-    plt.show()
-
-
-def save_results(
-        aligned_seq1: str,
-        aligned_seq2: str,
-        stats: Dict[str, float],
-        params: Dict[str, int],
-        output_file: str = "alignment_result.txt",
-) -> None:
-    """
-    Save alignment results to a text file.
-
-    The output includes:
-    - The aligned sequences
-    - Algorithm parameters
-    - Alignment statistics
-    - Optimal path information
-
-    Args:
-        aligned_seq1: First aligned sequence.
-        aligned_seq2: Second aligned sequence.
-        stats: Dictionary of alignment statistics.
-        params: Dictionary of algorithm parameters.
-        output_file: Path to save the results (default: "alignment_result.txt").
-
-    Returns:
-        None
-    """
-    with open(output_file, "w") as f:
-        f.write("=== Needleman-Wunsch Alignment Results ===\n\n")
-
-        f.write("=== Parameters ===\n")
-        f.write(f"Match score: {params['match_score']}\n")
-        f.write(f"Mismatch penalty: {params['mismatch_penalty']}\n")
-        f.write(f"Gap penalty: {params['gap_penalty']}\n\n")
-
-        f.write("=== Optimal Alignment ===\n")
-        # Display alignment in blocks of 100 characters for readability
-        block_size = 100
-        for i in range(0, len(aligned_seq1), block_size):
-            f.write(f"Seq1: {aligned_seq1[i:i + block_size]}\n")
-            f.write(f"Seq2: {aligned_seq2[i:i + block_size]}\n\n")
-
-        f.write("\n=== Alignment Statistics ===\n")
-        f.write(f"Alignment length: {stats['alignment_length']}\n")
-        f.write(f"Matches: {stats['matches']}\n")
-        f.write(f"Mismatches: {stats['mismatches']}\n")
-        f.write(f"Gaps: {stats['gaps']}\n")
-        f.write(f"Identity: {stats['identity']:.2f}%\n")
-        f.write(f"Gap percentage: {stats['gap_percentage']:.2f}%\n")
-        f.write(f"Alignment score: {stats['score']}\n\n")
-
-        f.write("=== Notes ===\n")
-        f.write("- The alignment shows one optimal pathway\n")
-        f.write("- Gaps are represented by '-' characters\n")
-        f.write("- Match/mismatch counts exclude positions with gaps\n")
-
-
-def main():
-    """Main function to run the Needleman-Wunsch alignment."""
-    print("=== Needleman-Wunsch Sequence Alignment ===")
-
-    # Input sequences
-    input_type = input("Load sequences from (manual/fasta): ").strip().lower()
-    if input_type == "fasta":
-        file_path = input("Enter FASTA file path: ").strip()
+        Returns:
+            List of sequence strings
+        """
+        sequences = []
+        current_sequence = ""
         try:
-            seq1, seq2 = read_fasta(file_path)
-        except (ValueError, FileNotFoundError) as e:
-            print(f"Error: {e}")
+            with open(filepath, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if line.startswith('>'):
+                        if current_sequence:
+                            sequences.append(current_sequence)
+                        current_sequence = ""
+                    else:
+                        current_sequence += line
+                if current_sequence:
+                    sequences.append(current_sequence)
+        except Exception as e:
+            messagebox.showerror("File Error", f"Could not read FASTA file: {e}")
+            return []
+        return sequences
+
+    def get_sequences(self):
+        """Get sequences based on selected input method.
+
+        Returns:
+            List of sequence strings
+        """
+        if self.input_method.get() == "manual":
+            sequences_str = self.sequence_text.get("1.0", tk.END).strip()
+            if not sequences_str:
+                messagebox.showwarning("Input Error", "Please enter sequences manually.")
+                return []
+            return [s.strip().upper() for s in sequences_str.split('\n') if s.strip()]
+        else:
+            filepath = self.fasta_path_entry.get()
+            if not filepath:
+                messagebox.showwarning("Input Error", "Please select a FASTA file.")
+                return []
+            return self.read_fasta_file(filepath)
+
+    def perform_alignment(self):
+        """Perform multiple sequence alignment using star method."""
+        self.sequences = self.get_sequences()
+        if not self.sequences:
             return
-    else:
-        seq1 = input("Enter first sequence: ").strip().upper()
-        seq2 = input("Enter second sequence: ").strip().upper()
-        if not (seq1.isalpha() and seq2.isalpha()):
-            print("Error: Sequences must contain only letters.")
+
+        if len(self.sequences) < 2:
+            messagebox.showwarning("Input Error", "Please provide at least two sequences for alignment.")
             return
 
-    # Input parameters
-    try:
-        match_score = int(input("Match score (default 1): ") or 1)
-        mismatch_penalty = int(input("Mismatch penalty (default -1): ") or -1)
-        gap_penalty = int(input("Gap penalty (default -2): ") or -2)
-    except ValueError:
-        print("Error: Parameters must be integers.")
-        return
+        match_s = self.match_score.get()
+        mismatch_s = self.mismatch_score.get()
+        gap_p = self.gap_penalty.get()
 
-    # Run alignment
-    matrix = initialize_matrix(seq1, seq2, gap_penalty)
-    matrix = fill_matrix(seq1, seq2, matrix, match_score, mismatch_penalty, gap_penalty)
-    aligned_seq1, aligned_seq2, path = traceback(seq1, seq2, matrix, match_score, mismatch_penalty, gap_penalty)
-    stats = calculate_statistics(aligned_seq1, aligned_seq2, matrix, match_score, mismatch_penalty, gap_penalty)
+        try:
+            self.alignment_text.delete("1.0", tk.END)
+            self.statistics_text.delete("1.0", tk.END)
+            self.alignment_text.insert(tk.END, "Performing Star Alignment...\n")
 
-    params = {
-        "match_score": match_score,
-        "mismatch_penalty": mismatch_penalty,
-        "gap_penalty": gap_penalty,
-    }
+            # Select center sequence (longest)
+            center_sequence_index = 0
+            max_len = 0
+            for i, seq in enumerate(self.sequences):
+                if len(seq) > max_len:
+                    max_len = len(seq)
+                    center_sequence_index = i
+            center_sequence = self.sequences[center_sequence_index]
+            self.alignment_text.insert(tk.END, f"Center Sequence: {center_sequence}\n\n")
 
-    # Display results
-    print("\n=== Optimal Alignment ===")
-    print(aligned_seq1)
-    print(aligned_seq2)
-    print("\n=== Statistics ===")
-    print(f"Alignment length: {stats['alignment_length']}")
-    print(f"Matches: {stats['matches']}")
-    print(f"Mismatches: {stats['mismatches']}")
-    print(f"Gaps: {stats['gaps']}")
-    print(f"Identity: {stats['identity']:.2f}%")
-    print(f"Gap percentage: {stats['gap_percentage']:.2f}%")
-    print(f"Alignment score: {stats['score']}")
+            # Perform pairwise alignments against center sequence
+            pairwise_aligned_segments_for_center = []
+            for i, seq in enumerate(self.sequences):
+                if i == center_sequence_index:
+                    continue
+                aligned_center_pw, aligned_other_pw = self.needleman_wunsch(
+                    center_sequence, seq, match_s, mismatch_s, gap_p
+                )
+                pairwise_aligned_segments_for_center.append((aligned_center_pw, aligned_other_pw))
 
-    # Save and plot
-    save_results(aligned_seq1, aligned_seq2, stats, params)
-    plot_matrix(matrix, seq1, seq2, path)
+            # Build master gapped center sequence
+            master_gapped_center_final = list(center_sequence)
+            all_center_gap_positions = set()
+
+            for aligned_center_pw, _ in pairwise_aligned_segments_for_center:
+                original_center_ptr = 0
+                for char_aligned in aligned_center_pw:
+                    if char_aligned == '-':
+                        all_center_gap_positions.add(original_center_ptr)
+                    else:
+                        original_center_ptr += 1
+
+            sorted_gap_positions = sorted(list(all_center_gap_positions), reverse=True)
+            for pos in sorted_gap_positions:
+                master_gapped_center_final.insert(pos, '-')
+
+            # Align all sequences to master gapped center
+            final_msa_sequences_str = []
+            for i, original_seq in enumerate(self.sequences):
+                if i == center_sequence_index:
+                    final_msa_sequences_str.append("".join(master_gapped_center_final))
+                else:
+                    _, aligned_other_final = self.needleman_wunsch(
+                        "".join(master_gapped_center_final), original_seq, match_s, mismatch_s, gap_p
+                    )
+                    final_msa_sequences_str.append(aligned_other_final)
+
+            # Display results
+            self.display_alignment(final_msa_sequences_str)
+            self.display_matplotlib_graph(final_msa_sequences_str)
+            self.calculate_and_display_statistics(final_msa_sequences_str, match_s, mismatch_s, gap_p)
+
+        except Exception as e:
+            messagebox.showerror("Alignment Error", f"An error occurred during alignment: {e}")
+
+    def needleman_wunsch(self, seq1, seq2, match_score, mismatch_score, gap_penalty):
+        """Perform Needleman-Wunsch global alignment.
+
+        Args:
+            seq1: First sequence
+            seq2: Second sequence
+            match_score: Score for matching characters
+            mismatch_score: Score for mismatching characters
+            gap_penalty: Penalty for gaps
+
+        Returns:
+            Tuple of (aligned_seq1, aligned_seq2)
+        """
+        n = len(seq1)
+        m = len(seq2)
+
+        # Initialize matrices
+        score_matrix = [[0] * (m + 1) for _ in range(n + 1)]
+        traceback_matrix = [[0] * (m + 1) for _ in range(n + 1)]
+
+        # Initialize first row and column
+        for i in range(1, n + 1):
+            score_matrix[i][0] = i * gap_penalty
+            traceback_matrix[i][0] = 1
+        for j in range(1, m + 1):
+            score_matrix[0][j] = j * gap_penalty
+            traceback_matrix[0][j] = 2
+
+        # Fill matrices
+        for i in range(1, n + 1):
+            for j in range(1, m + 1):
+                match = score_matrix[i - 1][j - 1] + (match_score if seq1[i - 1] == seq2[j - 1] else mismatch_score)
+                delete = score_matrix[i - 1][j] + gap_penalty
+                insert = score_matrix[i][j - 1] + gap_penalty
+
+                score_matrix[i][j] = max(match, delete, insert)
+
+                if score_matrix[i][j] == match:
+                    traceback_matrix[i][j] = 0
+                elif score_matrix[i][j] == delete:
+                    traceback_matrix[i][j] = 1
+                else:
+                    traceback_matrix[i][j] = 2
+
+        # Traceback
+        aligned_seq1 = []
+        aligned_seq2 = []
+        i, j = n, m
+
+        while i > 0 or j > 0:
+            if traceback_matrix[i][j] == 0:
+                aligned_seq1.append(seq1[i - 1])
+                aligned_seq2.append(seq2[j - 1])
+                i -= 1
+                j -= 1
+            elif traceback_matrix[i][j] == 1:
+                aligned_seq1.append(seq1[i - 1])
+                aligned_seq2.append('-')
+                i -= 1
+            else:
+                aligned_seq1.append('-')
+                aligned_seq2.append(seq2[j - 1])
+                j -= 1
+
+        return "".join(aligned_seq1[::-1]), "".join(aligned_seq2[::-1])
+
+    def display_alignment(self, aligned_sequences):
+        """Display aligned sequences with color coding.
+
+        Args:
+            aligned_sequences: List of aligned sequence strings
+        """
+        self.alignment_text.delete("1.0", tk.END)
+        if not aligned_sequences:
+            self.alignment_text.insert(tk.END, "No alignment to display.\n")
+            return
+
+        # Calculate consensus line
+        consensus_line = []
+        max_len = max(len(s) for s in aligned_sequences)
+
+        for col in range(max_len):
+            chars_at_col = [seq[col] if col < len(seq) else '-' for seq in aligned_sequences]
+            first_char = chars_at_col[0]
+            if all(char == first_char for char in chars_at_col) and first_char != '-':
+                consensus_line.append(first_char)
+            elif all(char == '-' for char in chars_at_col):
+                consensus_line.append(' ')
+            else:
+                consensus_line.append('.')
+
+        consensus_str = "".join(consensus_line)
+
+        # Display sequences with color coding
+        for seq_idx, seq in enumerate(aligned_sequences):
+            self.alignment_text.insert(tk.END, f"Seq {seq_idx + 1}: ")
+            for i, char in enumerate(seq):
+                if char == '-':
+                    self.alignment_text.insert(tk.END, char, "gap")
+                elif i < len(consensus_str) and consensus_str[i] == char and consensus_str[i] != '.':
+                    self.alignment_text.insert(tk.END, char, "match")
+                else:
+                    self.alignment_text.insert(tk.END, char, "mismatch")
+            self.alignment_text.insert(tk.END, "\n")
+
+    def display_matplotlib_graph(self, aligned_sequences):
+        """Display alignment visualization using matplotlib.
+
+        Args:
+            aligned_sequences: List of aligned sequence strings
+        """
+        self.ax.clear()
+        self.ax.set_title("Aligned Sequences View")
+        self.ax.set_xticks([])
+        self.ax.set_yticks([])
+
+        if not aligned_sequences:
+            self.ax.text(0.5, 0.5, "No alignment to display",
+                         horizontalalignment='center', verticalalignment='center',
+                         transform=self.ax.transAxes)
+            self.canvas_plot.draw()
+            return
+
+        max_len = len(aligned_sequences[0]) if aligned_sequences else 0
+        num_sequences = len(aligned_sequences)
+
+        if max_len == 0 or num_sequences == 0:
+            self.ax.text(0.5, 0.5, "No alignment to display",
+                         horizontalalignment='center', verticalalignment='center',
+                         transform=self.ax.transAxes)
+            self.canvas_plot.draw()
+            return
+
+        # Color mapping
+        color_map = {
+            'match': 'green',
+            'mismatch': 'red',
+            'gap': 'blue'
+        }
+
+        # Determine column conservation types
+        column_conservation_types = []
+        for col in range(max_len):
+            column_chars = [seq[col] for seq in aligned_sequences]
+            non_gap_chars = [c for c in column_chars if c != '-']
+            num_gaps_in_col = column_chars.count('-')
+
+            if num_gaps_in_col == len(column_chars):
+                column_conservation_types.append('gap')
+            elif len(set(non_gap_chars)) == 1 and non_gap_chars:
+                column_conservation_types.append('match')
+            else:
+                column_conservation_types.append('mismatch')
+
+        # Plot each character
+        for row_idx, seq in enumerate(aligned_sequences):
+            self.ax.text(-0.7, num_sequences - 1 - row_idx, f"Seq {row_idx + 1}:",
+                         ha='right', va='center', fontsize='small', color='black')
+            for col_idx, char in enumerate(seq):
+                conservation_type = column_conservation_types[col_idx]
+                char_color = color_map[conservation_type]
+                self.ax.text(col_idx, num_sequences - 1 - row_idx, char,
+                             ha='center', va='center', fontsize='small', color=char_color)
+
+        # Adjust plot limits
+        self.ax.set_xlim(-1.5, max_len)
+        self.ax.set_ylim(-0.5, num_sequences - 0.5)
+        self.ax.set_yticks([])
+        self.fig.tight_layout()
+        self.canvas_plot.draw()
+
+    def calculate_and_display_statistics(self, aligned_sequences, match_s, mismatch_s, gap_p):
+        """Calculate and display alignment statistics.
+
+        Args:
+            aligned_sequences: List of aligned sequence strings
+            match_s: Match score
+            mismatch_s: Mismatch score
+            gap_p: Gap penalty
+        """
+        self.statistics_text.delete("1.0", tk.END)
+        if not aligned_sequences:
+            self.statistics_text.insert(tk.END, "No statistics to display.\n")
+            return
+
+        num_sequences = len(aligned_sequences)
+        alignment_length = len(aligned_sequences[0])
+
+        total_gaps = 0
+        conserved_columns = 0
+        overall_matches = 0
+        overall_mismatches = 0
+
+        for col in range(alignment_length):
+            column_chars = [seq[col] for seq in aligned_sequences]
+            non_gap_chars = [c for c in column_chars if c != '-']
+            num_gaps_in_col = column_chars.count('-')
+
+            total_gaps += num_gaps_in_col
+
+            if not non_gap_chars:
+                continue
+
+            if len(set(non_gap_chars)) == 1:
+                conserved_columns += 1
+                overall_matches += 1
+            else:
+                overall_mismatches += 1
+
+        identity_percent = (conserved_columns / alignment_length) * 100 if alignment_length > 0 else 0
+
+        self.statistics_text.insert(tk.END, f"Program Parameters:\n")
+        self.statistics_text.insert(tk.END, f"  Match Score: {match_s}\n")
+        self.statistics_text.insert(tk.END, f"  Mismatch Score: {mismatch_s}\n")
+        self.statistics_text.insert(tk.END, f"  Gap Penalty: {gap_p}\n\n")
+
+        self.statistics_text.insert(tk.END, f"Alignment Statistics:\n")
+        self.statistics_text.insert(tk.END, f"  Alignment Length: {alignment_length}\n")
+        self.statistics_text.insert(tk.END, f"  Conserved Columns: {conserved_columns}\n")
+        self.statistics_text.insert(tk.END, f"  Overall Identity Percentage: {identity_percent:.2f}%\n")
+        self.statistics_text.insert(tk.END, f"  Total Matches (approx): {overall_matches}\n")
+        self.statistics_text.insert(tk.END, f"  Total Mismatches (approx): {overall_mismatches}\n")
+        self.statistics_text.insert(tk.END, f"  Total Gaps (approx, sum of all gaps): {total_gaps}\n")
+
+    def save_output(self):
+        """Save alignment results to a text file."""
+        if not self.alignment_text.get("1.0", tk.END).strip():
+            messagebox.showwarning("Save Error", "No alignment results to save.")
+            return
+
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
+        )
+        if filepath:
+            try:
+                with open(filepath, 'w') as f:
+                    f.write("--- Multiple Sequence Alignment Results ---\n\n")
+                    f.write("Program Parameters:\n")
+                    f.write(f"  Match Score: {self.match_score.get()}\n")
+                    f.write(f"  Mismatch Score: {self.mismatch_score.get()}\n")
+                    f.write(f"  Gap Penalty: {self.gap_penalty.get()}\n\n")
+                    f.write("Aligned Sequences:\n")
+                    f.write(self.alignment_text.get("1.0", tk.END).strip() + "\n\n")
+                    f.write("Statistics:\n")
+                    f.write(self.statistics_text.get("1.0", tk.END).strip() + "\n")
+                messagebox.showinfo("Save Successful", "Alignment results saved successfully!")
+            except Exception as e:
+                messagebox.showerror("Save Error", f"Could not save file: {e}")
 
 
 if __name__ == "__main__":
-    main()
+    root = tk.Tk()
+    app = MSAGUI(root)
+    root.mainloop()
